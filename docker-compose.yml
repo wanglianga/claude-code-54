@@ -1,0 +1,33 @@
+# 社区家电维修预约与上门证据平台
+# 仅 app 服务发布到宿主（${CC_PUBLISH_PORT}:8080），数据库仅在内部网络访问
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: repair
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-repair123}
+      POSTGRES_DB: repair
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U repair -d repair"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://repair:${POSTGRES_PASSWORD:-repair123}@db:5432/repair
+      APP_SECRET: ${APP_SECRET:-community-repair-secret}
+      PORT: 8080
+    ports:
+      - "${CC_PUBLISH_PORT}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db_data:

@@ -1,0 +1,58 @@
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*secret*
+*token*
+*credential*
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+target/
+coverage/
+.cache/
+.vite/
+*.tsbuildinfo
+
+# Runtime and local data
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.sqlite
+*.sqlite3
+*.db
+data/
+uploads/
+
+# Local agent state, configuration, trajectories, and QA artifacts
+CLAUDE.md
+.claude/
+.playwright-cli/
+memory/
+**/memory/
+skill/
+skills/
+**/skill/
+**/skills/
+*_traces/
+traces/
+*.jsonl
+qa/
+QA/
+*qa-report*
+*QA-report*
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
