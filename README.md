@@ -23,7 +23,6 @@ docker compose port app 8080   # 查看实际映射端口，浏览器访问 http
 - 只有 **app** 服务发布到宿主（`${CC_PUBLISH_PORT}:8080`）；PostgreSQL 仅在 compose 内部网络，app 通过服务名 `db` 访问。
 - 首次启动自动建表并写入演示数据（账号、配件库存、9 条完整归档订单、6 条进行中订单、返修与异常样例）。
 - 端到端自测（可选）：栈启动后执行 `node scripts/smoke.mjs`（默认打 `http://host.docker.internal:3054`，可用 `BASE=http://host.docker.internal:<端口>` 覆盖），覆盖登录、推荐、配件联动拦截、签到取证、报价确认、维修完成、支付评价归档、质保返修、异常协同、统计准入、档案追溯共 51 项断言。
-- 真实浏览器回归（可选）：`scripts/browser-verify.cjs` 基于 Playwright + Chromium（可用 `mcr.microsoft.com/playwright` 镜像运行，`BASE=http://app:8080` 接入 compose 网络），覆盖"居民创建空调『不启动/遥控失灵』工单 → 详情/日程/档案故障标签核对 → 师傅准入页返修率预警"共 17 项断言；`scripts/timeline-verify.cjs` 为时间线区域专项验收（7 项断言，聚焦"提交报修"节点展示居民所选故障）；最近一次通过的截图存于 `verification/`。
 - 验证结束：`docker compose down`（加 `-v` 可同时清空数据卷）。
 
 ## 演示账号（逐角色）
