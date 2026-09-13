@@ -1,6 +1,7 @@
 # Environment and credentials
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.p12
@@ -37,10 +38,16 @@ CLAUDE.md
 .playwright-cli/
 memory/
 **/memory/
+memory
+memory.*
+MEMORY.md
 skill/
 skills/
 **/skill/
 **/skills/
+skill
+skills
+SKILL.md
 *_traces/
 traces/
 *.jsonl

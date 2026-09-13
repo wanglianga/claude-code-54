@@ -28,8 +28,13 @@ function detailText(d: any): string {
   if (!d || typeof d !== 'object') return ''
   const parts: string[] = []
   if (d.order_no) parts.push(`工单 ${d.order_no}`)
+  if (d.device) parts.push(`设备：${d.device}${d.brand ? ` ${d.brand}` : ''}${d.model ? ` ${d.model}` : ''}`)
+  if (d.fault) parts.push(`故障：${d.fault}`)
+  if (d.floor) parts.push(`楼层：${d.floor} 层`)
+  if (d.safety_risk === 'high') parts.push('高空作业风险')
   if (d.technician) parts.push(`师傅：${d.technician}`)
   if (d.date) parts.push(`${d.date} ${d.slot || ''}`)
+  if (d.reserved_parts?.length) parts.push(`预留配件：${d.reserved_parts.join('、')}`)
   if (d.total_cents != null) parts.push(`金额 ¥${fen(d.total_cents)}`)
   if (d.amount_cents != null) parts.push(`实付 ¥${fen(d.amount_cents)}`)
   if (d.part) parts.push(`配件：${d.part}×${d.qty || 1}${d.batch_no ? `（批次 ${d.batch_no}）` : ''}`)
