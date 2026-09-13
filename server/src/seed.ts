@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { pool } from './db'
 import { hashPassword, addDays } from './util'
-import { DEVICE_LABEL, FAULT_LABEL, SLOTS, WARRANTY_DAYS } from './meta'
+import { DEVICE_LABEL, SLOTS, WARRANTY_DAYS, faultLabel } from './meta'
 
 /** 种子数据在单事务内执行，失败整体回滚，避免半初始化状态 */
 let tx: any = null
@@ -101,7 +101,7 @@ async function seedFullOrder(o: SeedOrderOpts): Promise<number> {
        technician_id, scheduled_date, scheduled_slot, safety_risk, original_order_id, is_warranty_rework,
        test_result, test_note, created_at, updated_at)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'archived',$16,$17,$18,$19,$20,$21,'pass','试机正常，运行参数达标',$22,$23) RETURNING id`,
-    [o.orderNo, o.resident.id, o.device, o.brand, o.model, o.fault, `${FAULT_LABEL[o.fault] || ''}，用户报修`,
+    [o.orderNo, o.resident.id, o.device, o.brand, o.model, o.fault, `${faultLabel(o.device, o.fault)}，用户报修`,
      3, o.floor, true, o.community.name, `${o.community.name}${1 + (o.createdDaysAgo % 20)}栋${o.floor}0${1 + (o.createdDaysAgo % 3)}室`,
      o.community.lat, o.community.lng,
      JSON.stringify([{ date, slot: SLOTS[0] }, { date, slot: SLOTS[1] }]),
@@ -109,7 +109,7 @@ async function seedFullOrder(o: SeedOrderOpts): Promise<number> {
   )
   const id = r.rows[0].id
 
-  await ev(id, o.resident, '提交报修', { order_no: o.orderNo, device: DEVICE_LABEL[o.device], brand: o.brand, fault: FAULT_LABEL[o.fault] }, t0)
+  await ev(id, o.resident, '提交报修', { order_no: o.orderNo, device: DEVICE_LABEL[o.device], brand: o.brand, fault: faultLabel(o.device, o.fault) }, t0)
   await ev(id, null, '系统生成师傅推荐', { rule: '技能+距离+配件库存+安全风险+档期' }, t0)
   await ev(id, o.resident, '居民预约上门', { technician: o.tech.name, date, slot: SLOTS[0] }, t0)
   await s(`INSERT INTO schedule(technician_id, date, slot, order_id, created_at) VALUES($1,$2,$3,$4,$5)`,
@@ -291,7 +291,7 @@ export async function seedIfEmpty() {
      JSON.stringify([{ date: dateStr(-1), slot: SLOTS[0] }, { date: dateStr(-1), slot: SLOTS[1] }, { date: dateStr(-2), slot: SLOTS[0] }]),
      daysAgo(0, 8)]
   )
-  await ev(d1.rows[0].id, user01, '提交报修', { device: '空调', brand: '格力', fault: FAULT_LABEL['not_cooling'] }, daysAgo(0, 8))
+  await ev(d1.rows[0].id, user01, '提交报修', { device: '空调', brand: '格力', fault: faultLabel('ac', 'not_cooling') }, daysAgo(0, 8))
   await ev(d1.rows[0].id, null, '系统生成师傅推荐', { rule: '技能+距离+配件库存+安全风险+档期' }, daysAgo(0, 8))
 
   // 2) 已预约（user02 洗衣机不脱水 → 李师傅，明天上午；排水泵已预留）
@@ -308,7 +308,7 @@ export async function seedIfEmpty() {
   await s(`INSERT INTO schedule(technician_id, date, slot, order_id) VALUES($1,$2,$3,$4)`, [tech02.id, d2date, SLOTS[0], d2.rows[0].id])
   await s(`INSERT INTO order_parts(order_id, part_id, qty, status, batch_no) VALUES($1,$2,1,'reserved',$3)`,
     [d2.rows[0].id, partId['P-WM-PUMP'], 'B202601-C'])
-  await ev(d2.rows[0].id, user02, '提交报修', { device: '洗衣机', brand: '小天鹅', fault: FAULT_LABEL['no_spin'] }, daysAgo(0, 7))
+  await ev(d2.rows[0].id, user02, '提交报修', { device: '洗衣机', brand: '小天鹅', fault: faultLabel('washer', 'no_spin') }, daysAgo(0, 7))
   await ev(d2.rows[0].id, user02, '居民预约上门', { technician: '李师傅', date: d2date, slot: SLOTS[0] }, daysAgo(0, 7))
 
   // 3) 报价待确认（user01 热水器不加热 → 李师傅已到场检测并报价，含配件不匹配异常待仓库处理）
@@ -323,7 +323,7 @@ export async function seedIfEmpty() {
   const d3id = d3.rows[0].id
   await s(`INSERT INTO schedule(technician_id, date, slot, order_id) VALUES($1,$2,$3,$4)`, [tech02.id, dateStr(0), SLOTS[0], d3id])
   await s(`INSERT INTO order_parts(order_id, part_id, qty, status, batch_no) VALUES($1,$2,1,'reserved',$3)`, [d3id, partId['P-WH-HEAT'], 'B202603-B'])
-  await ev(d3id, user01, '提交报修', { device: '热水器', brand: 'AO史密斯', fault: FAULT_LABEL['no_heat'] }, daysAgo(1, 16))
+  await ev(d3id, user01, '提交报修', { device: '热水器', brand: 'AO史密斯', fault: faultLabel('water_heater', 'no_heat') }, daysAgo(1, 16))
   await ev(d3id, user01, '居民预约上门', { technician: '李师傅', date: dateStr(0), slot: SLOTS[0] }, daysAgo(1, 17))
   await ev(d3id, tech02, '师傅到场签到', {}, daysAgo(0, 9))
   await evd(d3id, no(), 'appearance', '热水器外观完好，无磕碰', tech02, daysAgo(0, 9))
@@ -351,7 +351,7 @@ export async function seedIfEmpty() {
   await s(`INSERT INTO schedule(technician_id, date, slot, order_id) VALUES($1,$2,$3,$4)`, [tech01.id, dateStr(0), SLOTS[1], d4id])
   await s(`UPDATE parts SET stock = GREATEST(stock-1,0) WHERE id=$1`, [partId['P-FR-COMP']])
   await s(`INSERT INTO order_parts(order_id, part_id, qty, status, batch_no) VALUES($1,$2,1,'outbound',$3)`, [d4id, partId['P-FR-COMP'], 'B202601-A'])
-  await ev(d4id, user01, '提交报修', { device: '冰箱', brand: '海尔', fault: FAULT_LABEL['not_cooling'] }, daysAgo(2, 15))
+  await ev(d4id, user01, '提交报修', { device: '冰箱', brand: '海尔', fault: faultLabel('fridge', 'not_cooling') }, daysAgo(2, 15))
   await ev(d4id, user01, '居民预约上门', { technician: '王师傅', date: dateStr(0), slot: SLOTS[1] }, daysAgo(2, 16))
   await ev(d4id, tech01, '师傅到场签到', {}, daysAgo(0, 14))
   await evd(d4id, no(), 'appearance', '冰箱外观完好', tech01, daysAgo(0, 14))
@@ -381,7 +381,7 @@ export async function seedIfEmpty() {
   const d5id = d5.rows[0].id
   await s(`INSERT INTO schedule(technician_id, date, slot, order_id) VALUES($1,$2,$3,$4)`, [tech03.id, dateStr(0), SLOTS[2], d5id])
   await s(`INSERT INTO order_parts(order_id, part_id, qty, status, batch_no) VALUES($1,$2,1,'reserved',$3)`, [d5id, partId['P-AC-CAP'], 'B202604-A'])
-  await ev(d5id, user02, '提交报修', { device: '空调', brand: '美的', fault: FAULT_LABEL['no_power'] }, daysAgo(1, 10))
+  await ev(d5id, user02, '提交报修', { device: '空调', brand: '美的', fault: faultLabel('ac', 'no_power') }, daysAgo(1, 10))
   await ev(d5id, user02, '居民预约上门', { technician: '赵师傅', date: dateStr(0), slot: SLOTS[2] }, daysAgo(1, 11))
   await ev(d5id, tech03, '师傅到场签到', {}, daysAgo(0, 18))
   await evd(d5id, no(), 'fault_check', '检测为电容老化，建议更换', tech03, daysAgo(0, 18))
@@ -413,7 +413,7 @@ export async function seedIfEmpty() {
   const d6id = d6.rows[0].id
   await s(`INSERT INTO schedule(technician_id, date, slot, order_id) VALUES($1,$2,$3,$4)`, [tech02.id, dateStr(0), SLOTS[1], d6id])
   await s(`INSERT INTO order_parts(order_id, part_id, qty, status, batch_no) VALUES($1,$2,1,'reserved',$3)`, [d6id, partId['P-WM-BOARD'], 'B202602-B'])
-  await ev(d6id, user01, '提交报修', { device: '洗衣机', brand: '海尔', fault: FAULT_LABEL['no_power'] }, daysAgo(1, 14))
+  await ev(d6id, user01, '提交报修', { device: '洗衣机', brand: '海尔', fault: faultLabel('washer', 'no_power') }, daysAgo(1, 14))
   await ev(d6id, user01, '居民预约上门', { technician: '李师傅', date: dateStr(0), slot: SLOTS[1] }, daysAgo(1, 15))
   await ev(d6id, tech02, '师傅到场签到', {}, daysAgo(0, 15))
   await evd(d6id, no(), 'fault_check', '电脑板烧毁，但仓库预留板与该机型接口不匹配', tech02, daysAgo(0, 15))

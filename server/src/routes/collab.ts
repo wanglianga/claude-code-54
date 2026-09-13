@@ -211,7 +211,13 @@ collabRouter.get('/technicians', requireRole('admin', 'cs'), h(async (_req, res)
   )
   const stats = await technicianStats()
   const statMap = new Map(stats.map((s: any) => [s.technician_id, s]))
-  res.json(r.rows.map((t: any) => ({ ...t, stats: statMap.get(t.id) || null })))
+  res.json(r.rows.map((t: any) => ({
+    ...t,
+    stats: statMap.get(t.id) || {
+      done: 0, rework: 0, rework_rate: null, avg_rating: null, exception_count: 0,
+      admission_hint: '样本不足，继续观察',
+    },
+  })))
 }))
 
 collabRouter.patch('/technicians/:id', requireRole('admin'), h(async (req, res) => {
@@ -242,11 +248,21 @@ async function technicianStats() {
         WHERE o4.technician_id = o.technician_id)::int AS exception_count
     FROM orders o WHERE o.technician_id IS NOT NULL GROUP BY o.technician_id
   `)
-  return r.rows.map((s: any) => ({
-    ...s,
-    avg_rating: s.avg_rating ? parseFloat(s.avg_rating) : null,
-    rework_rate: s.done > 0 ? s.rework / s.done : null,
-  }))
+  return r.rows.map((s: any) => {
+    const avg = s.avg_rating ? parseFloat(s.avg_rating) : null
+    const rate = s.done > 0 ? s.rework / s.done : null
+    return {
+      ...s,
+      avg_rating: avg,
+      rework_rate: rate,
+      // 准入规则：完成 ≥3 单且返修率 >20% → 建议暂停准入；返修率 ≤10% 且评分 ≥4.5 → 优质师傅
+      admission_hint: s.done >= 3 && rate !== null && rate > 0.2
+        ? '返修率偏高，建议暂停准入'
+        : rate !== null && rate <= 0.1 && (avg ?? 0) >= 4.5
+          ? '优质师傅，可优先派单'
+          : s.done < 3 ? '样本不足，继续观察' : '正常',
+    }
+  })
 }
 
 collabRouter.get('/stats/overview', requireRole('admin', 'cs'), h(async (_req, res) => {
@@ -271,16 +287,14 @@ collabRouter.get('/stats/rework', requireRole('admin', 'cs'), h(async (req, res)
     const stats = await technicianStats()
     const m = new Map(stats.map((s: any) => [s.technician_id, s]))
     return res.json(techs.rows.map((t: any) => {
-      const s: any = m.get(t.id) || { done: 0, rework: 0, avg_rating: null, exception_count: 0 }
-      const rate = s.done > 0 ? s.rework / s.done : null
+      const s: any = m.get(t.id) || {
+        done: 0, rework: 0, rework_rate: null, avg_rating: null, exception_count: 0,
+        admission_hint: '样本不足，继续观察',
+      }
       return {
         key: t.id, name: t.name, done: s.done, rework: s.rework,
-        rework_rate: rate, avg_rating: s.avg_rating, exception_count: s.exception_count,
-        admission_hint: s.done >= 3 && rate !== null && rate > 0.2
-          ? '返修率偏高，建议暂停准入'
-          : rate !== null && rate <= 0.1 && (s.avg_rating || 0) >= 4.5
-            ? '优质师傅，可优先派单'
-            : s.done < 3 ? '样本不足，继续观察' : '正常',
+        rework_rate: s.rework_rate, avg_rating: s.avg_rating, exception_count: s.exception_count,
+        admission_hint: s.admission_hint,
       }
     }))
   }

@@ -4,7 +4,7 @@ import fs from 'fs'
 import multer from 'multer'
 import { pool, q, logEvent, touchOrder, partAvailability } from '../db'
 import { AuthedRequest, authRequired, requireRole, orderNo, today, addDays } from '../util'
-import { COMMUNITIES, DEVICE_LABEL, FAULT_LABEL, ORDER_STATUS, SLOTS, WARRANTY_DAYS, DONE_STATUS } from '../meta'
+import { COMMUNITIES, DEVICE_LABEL, ORDER_STATUS, SLOTS, WARRANTY_DAYS, DONE_STATUS, faultLabel } from '../meta'
 import { recommendForOrder, neededParts, slotFreeCount } from '../recommend'
 
 export const ordersRouter = Router()
@@ -31,7 +31,7 @@ function withLabels(o: any) {
   return {
     ...o,
     device_label: DEVICE_LABEL[o.device_type] || o.device_type,
-    fault_label: FAULT_LABEL[o.fault_type] || o.fault_type,
+    fault_label: faultLabel(o.device_type, o.fault_type),
     status_label: ORDER_STATUS[o.status] || o.status,
   }
 }
@@ -137,7 +137,7 @@ ordersRouter.post('/', requireRole('resident'), h(async (req, res) => {
   await logEvent(id, u, '提交报修', {
     order_no: no,
     device: DEVICE_LABEL[b.device_type], brand: b.brand, model: b.model,
-    fault: FAULT_LABEL[b.fault_type], floor, safety_risk: safetyRisk,
+    fault: faultLabel(b.device_type, b.fault_type), floor, safety_risk: safetyRisk,
   })
   await logEvent(id, null, '系统生成师傅推荐', { rule: '技能+距离+配件库存+安全风险+档期' })
   res.json({ id, order_no: no })

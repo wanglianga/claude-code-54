@@ -48,6 +48,8 @@ qa/
 QA/
 *qa-report*
 *QA-report*
+verification/
+/scripts/browser-verify.cjs
 
 # Editor and OS files
 .DS_Store

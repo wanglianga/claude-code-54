@@ -64,6 +64,13 @@ async function main() {
   check('创建报修单', create.status === 200 && create.data.id, JSON.stringify(create.data))
   const oid = create.data.id
 
+  // 回归：故障标签必须按品类展示（空调 no_power = 不启动/遥控失灵，而非热水器的"不通电/显示异常"）
+  const created = await req('GET', `/orders/${oid}`, { token: tokens.user01 })
+  check('空调 no_power 详情故障标签为「不启动 / 遥控失灵」', created.data.order.fault_label === '不启动 / 遥控失灵', created.data.order.fault_label)
+  check('时间线事件记录正确故障文案', created.data.events.some(e => JSON.stringify(e.detail).includes('不启动 / 遥控失灵')))
+  const listMine = await req('GET', '/orders', { token: tokens.user01 })
+  check('订单列表故障标签正确', listMine.data.find(o => o.id === oid)?.fault_label === '不启动 / 遥控失灵')
+
   const recs = await req('GET', `/orders/${oid}/recommendations`, { token: tokens.user01 })
   check('推荐列表返回师傅', recs.status === 200 && recs.data.length >= 2)
   const t01 = recs.data.find(r => r.name === '王师傅')
@@ -189,6 +196,9 @@ async function main() {
 
   const techs = await req('GET', '/technicians', { token: tokens.admin })
   const zhaoRow = techs.data.find(t => t.name === '赵师傅')
+  // 回归：准入建议必须随返修率给出（赵师傅约 43% → 暂停准入），不再显示 "—"
+  check('准入建议：赵师傅(返修率>20%)显示暂停准入预警', zhaoRow?.stats?.admission_hint?.includes('暂停'), JSON.stringify(zhaoRow?.stats))
+  check('所有师傅均有准入建议（无空值）', techs.data.every(t => !!t.stats?.admission_hint))
   check('平台暂停赵师傅准入', (await req('PATCH', `/technicians/${zhaoRow.id}`, { token: tokens.admin, body: { status: 'suspended' } })).status === 200)
   const recs2 = await req('GET', `/orders/${rework.data.id}/recommendations`, { token: tokens.user01 })
   check('被暂停师傅不再进入推荐', recs2.data.every(r => r.name !== '赵师傅'))

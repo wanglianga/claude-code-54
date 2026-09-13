@@ -43,9 +43,14 @@ export const FAULTS: Record<string, { value: string; label: string }[]> = {
   ],
 }
 
-export const FAULT_LABEL: Record<string, string> = Object.fromEntries(
-  Object.values(FAULTS).flat().map(f => [f.value, f.label])
+/** 故障标签按「品类 + 故障码」嵌套：同一故障码在不同品类下文案不同（如 no_power：空调=不启动/遥控失灵，热水器=不通电/显示异常） */
+export const FAULT_LABEL: Record<string, Record<string, string>> = Object.fromEntries(
+  Object.entries(FAULTS).map(([dt, faults]) => [dt, Object.fromEntries(faults.map(f => [f.value, f.label]))])
 )
+
+export function faultLabel(deviceType: string, faultType: string): string {
+  return FAULT_LABEL[deviceType]?.[faultType] || faultType
+}
 
 export const COMMUNITIES = [
   { name: '阳光社区', lat: 31.2395, lng: 121.4998 },
