@@ -13,10 +13,16 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="高空证" width="80">
+        <el-table-column label="高空资质" width="110">
           <template #default="{ row }">
-            <el-tag v-if="row.high_altitude_cert" type="success" size="small">持证</el-tag>
-            <span v-else class="muted">无</span>
+            <el-switch :model-value="row.high_altitude_cert" inline-prompt active-text="持证" inactive-text="无"
+              @change="(v: boolean) => toggleCert(row, v)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="风险上报" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.risk_reports > 0" size="small" type="warning" effect="plain">{{ row.risk_reports }} 次</el-tag>
+            <span v-else class="muted">0</span>
           </template>
         </el-table-column>
         <el-table-column prop="community" label="常驻社区" width="110" />
@@ -101,6 +107,16 @@ async function toggle(row: any, status: string) {
   )
   await api.patch(`/technicians/${row.id}`, { status })
   ElMessage.success('已更新')
+  load()
+}
+
+async function toggleCert(row: any, cert: boolean) {
+  await ElMessageBox.confirm(
+    cert ? `授予 ${row.name} 高空作业资质？高空风险订单将可派给该师傅` : `吊销 ${row.name} 的高空作业资质？高空风险订单将不再派给该师傅`,
+    '高空资质变更', { type: 'warning' }
+  )
+  await api.patch(`/technicians/${row.id}`, { high_altitude_cert: cert })
+  ElMessage.success('高空资质已更新')
   load()
 }
 

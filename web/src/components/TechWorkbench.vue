@@ -83,7 +83,18 @@ async function run(fn: () => Promise<any>, msg: string) {
   }
 }
 
-const checkin = () => run(() => api.post(`/orders/${props.order.id}/checkin`), '已签到，请上传现场证据')
+const checkin = () => run(async () => {
+  // 签到时尝试获取师傅实时位置（授权后纳入到达轨迹）
+  let loc: any = {}
+  try {
+    const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+      if (!navigator.geolocation) return reject(new Error('no geo'))
+      navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 })
+    })
+    loc = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+  } catch { /* 未授权定位则仅签到 */ }
+  return api.post(`/orders/${props.order.id}/checkin`, loc)
+}, '已签到，请上传现场证据')
 const startRepair = () => run(() => api.post(`/orders/${props.order.id}/start-repair`), '开始维修')
 
 async function complete() {

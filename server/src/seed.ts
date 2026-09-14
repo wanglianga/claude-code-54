@@ -41,11 +41,11 @@ function svgEvidence(orderNo: string, label: string, color: string): string {
 
 const STAGE_COLOR: Record<string, string> = {
   appearance: '#3b6ea5', old_damage: '#8c5a2b', fault_check: '#6b4e9e',
-  disassembly: '#2b6e5a', test_result: '#9e3b3b',
+  risk: '#b3541e', disassembly: '#2b6e5a', test_result: '#9e3b3b',
 }
 const STAGE_LABEL: Record<string, string> = {
   appearance: '设备外观', old_damage: '旧损记录', fault_check: '故障检测',
-  disassembly: '拆机照片', test_result: '试机结果',
+  risk: '高空风险照片', disassembly: '拆机照片', test_result: '试机结果',
 }
 
 async function ev(orderId: number, actor: any, action: string, detail: any, at: Date) {
@@ -213,25 +213,25 @@ export async function seedIfEmpty() {
     [tech01.id, C[0].lat, C[0].lng, tech02.id, C[1].lat, C[1].lng, tech03.id, C[2].lat, C[2].lng])
 
   const partsSeed = [
-    ['P-FR-COMP', '冰箱压缩机（通用）', 'fridge', [], ['not_cooling'], 3, 45000, 'B202601-A', '华冷配件'],
-    ['P-FR-DRAIN', '冰箱排水管', 'fridge', [], ['leaking'], 8, 2500, 'B202601-B', '华冷配件'],
-    ['P-FR-FAN', '冰箱风扇电机', 'fridge', [], ['noisy'], 5, 8000, 'B202602-A', '苏北机电'],
-    ['P-WM-PUMP', '洗衣机排水泵', 'washer', [], ['no_spin', 'leaking'], 6, 6500, 'B202601-C', '苏北机电'],
-    ['P-WM-BELT', '洗衣机皮带', 'washer', [], ['no_spin', 'noisy'], 10, 1500, 'B202603-A', '苏北机电'],
-    ['P-WM-BOARD', '洗衣机电脑板', 'washer', ['海尔', '小天鹅'], ['no_power'], 2, 18000, 'B202602-B', '原厂渠道'],
-    ['P-AC-CAP', '空调电容', 'ac', [], ['no_power', 'not_cooling'], 12, 3000, 'B202604-A', '制冷配件城'],
-    ['P-AC-REF', '制冷剂 R32（罐）', 'ac', [], ['not_cooling'], 7, 9000, 'B202604-B', '制冷配件城'],
-    ['P-AC-BOARD', '空调遥控接收板', 'ac', ['格力', '美的'], ['no_power'], 0, 12000, 'B202605-A', '原厂渠道'],
-    ['P-WH-HEAT', '热水器加热管', 'water_heater', [], ['no_heat'], 6, 7500, 'B202603-B', '苏北机电'],
-    ['P-WH-VALVE', '安全泄压阀', 'water_heater', [], ['leaking'], 9, 2000, 'B202601-D', '苏北机电'],
-    ['P-WH-IGN', '燃气点火器', 'water_heater', [], ['no_ignite'], 4, 5500, 'B202602-C', '原厂渠道'],
+    ['P-FR-COMP', '冰箱压缩机（通用）', 'fridge', [], ['not_cooling'], 3, 45000, 'B202601-A', '华冷配件', 'QD128Y'],
+    ['P-FR-DRAIN', '冰箱排水管', 'fridge', [], ['leaking'], 8, 2500, 'B202601-B', '华冷配件', 'DR-25mm'],
+    ['P-FR-FAN', '冰箱风扇电机', 'fridge', [], ['noisy'], 5, 8000, 'B202602-A', '苏北机电', 'YZF-12W'],
+    ['P-WM-PUMP', '洗衣机排水泵', 'washer', [], ['no_spin', 'leaking'], 6, 6500, 'B202601-C', '苏北机电', 'PX-30W'],
+    ['P-WM-BELT', '洗衣机皮带', 'washer', [], ['no_spin', 'noisy'], 10, 1500, 'B202603-A', '苏北机电', 'O-480E'],
+    ['P-WM-BOARD', '洗衣机电脑板', 'washer', ['海尔', '小天鹅'], ['no_power'], 2, 18000, 'B202602-B', '原厂渠道', 'XQG-CTRL-V3'],
+    ['P-AC-CAP', '空调电容', 'ac', [], ['no_power', 'not_cooling'], 12, 3000, 'B202604-A', '制冷配件城', 'CBB65-35uF'],
+    ['P-AC-REF', '制冷剂 R32（罐）', 'ac', [], ['not_cooling'], 7, 9000, 'B202604-B', '制冷配件城', 'R32-3kg'],
+    ['P-AC-BOARD', '空调遥控接收板', 'ac', ['格力', '美的'], ['no_power'], 0, 12000, 'B202605-A', '原厂渠道', 'GR-REMOTE-2.4G'],
+    ['P-WH-HEAT', '热水器加热管', 'water_heater', [], ['no_heat'], 6, 7500, 'B202603-B', '苏北机电', 'ZN-1500W'],
+    ['P-WH-VALVE', '安全泄压阀', 'water_heater', [], ['leaking'], 9, 2000, 'B202601-D', '苏北机电', 'AQ-0.7MPa'],
+    ['P-WH-IGN', '燃气点火器', 'water_heater', [], ['no_ignite'], 4, 5500, 'B202602-C', '原厂渠道', 'DH-脉冲'],
   ]
   const partId: Record<string, number> = {}
-  for (const [sku, name, dt, brands, faults, stock, price, batch, supplier] of partsSeed as any[]) {
+  for (const [sku, name, dt, brands, faults, stock, price, batch, supplier, model] of partsSeed as any[]) {
     const r = await s(
-      `INSERT INTO parts(sku, name, device_type, brands, faults, stock, price_cents, batch_no, supplier)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [sku, name, dt, JSON.stringify(brands), JSON.stringify(faults), stock, price, batch, supplier]
+      `INSERT INTO parts(sku, name, device_type, brands, faults, stock, price_cents, batch_no, supplier, model)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [sku, name, dt, JSON.stringify(brands), JSON.stringify(faults), stock, price, batch, supplier, model]
     )
     partId[sku] = r.rows[0].id
   }
@@ -253,6 +253,32 @@ export async function seedIfEmpty() {
   await full({ tech: tech01, device: 'fridge', fault: 'leaking', brand: '容声', model: 'BCD-180', floor: 4, createdDaysAgo: 38, partIds: [partId['P-FR-DRAIN']], laborCents: 6000, rating: 5 })
   await full({ tech: tech01, device: 'ac', fault: 'leaking', brand: '奥克斯', model: 'KFR-32GW', floor: 6, createdDaysAgo: 30, partIds: [], laborCents: 8000, rating: 5, comment: '疏通排水管，未换件，收费透明。' })
   await full({ tech: tech01, device: 'fridge', fault: 'noisy', brand: '西门子', model: 'KK28', floor: 5, createdDaysAgo: 22, partIds: [partId['P-FR-FAN']], laborCents: 8000, rating: 4 })
+
+  // a1（王师傅 12 楼空调）高空风险确认样例：上报 → 客服确认继续 → 加收高空费 → 轨迹留痕
+  await evd(a1, 'R2026SEED-001', 'risk', '外机支架锈蚀特写，悬空无护栏', tech01, daysAgo(60, 12))
+  await s(
+    `INSERT INTO risk_assessments(order_id, technician_id, floor, anchor_condition, need_two_person, danger_desc, fee_adjust_cents, status, cs_action, cs_note, handler_id, handler_name, created_at, resolved_at)
+     VALUES($1,$2,12,'支架锈蚀松动',true,'外机支架锈蚀，悬空作业面无护栏，建议双人作业并加收高空作业费',20000,'confirmed','continue','用户确认高空作业费后继续维修',$3,'客服小陈',$4,$5)`,
+    [a1, tech01.id, cs.id, daysAgo(60, 12), daysAgo(60, 13)]
+  )
+  await ev(a1, tech01, '上报高空风险确认', { floor: 12, anchor_condition: '支架锈蚀松动', need_two_person: true, danger_desc: '外机支架锈蚀，悬空作业面无护栏', fee_adjust_cents: 20000 }, daysAgo(60, 12))
+  await ev(a1, cs, '高空风险处置：确认风险，继续维修（加收高空费）', { fee_adjust_cents: 20000, note: '用户确认高空作业费后继续维修' }, daysAgo(60, 13))
+  await s(`UPDATE orders SET fee_adjust_cents=20000, fee_note='高空作业费(12层)', checkin_lat=$1, checkin_lng=$2 WHERE id=$3`,
+    [C[0].lat + 0.0025, C[0].lng + 0.002, a1])
+  await s(`UPDATE payments SET amount_cents = amount_cents + 20000 WHERE order_id=$1`, [a1])
+  await s(`UPDATE technicians SET risk_reports = 1 WHERE user_id=$1`, [tech01.id])
+  const trackPts: [number, number, string][] = [
+    [0.0008, 0.0006, '从社区门口出发'],
+    [0.0016, 0.0012, '到达 1 栋楼下'],
+    [0.0025, 0.002, '到场签到'],
+  ]
+  for (let i = 0; i < trackPts.length; i++) {
+    const [dLat, dLng, note] = trackPts[i]
+    await s(
+      `INSERT INTO tracks(order_id, lat, lng, note, created_by, created_by_name, created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+      [a1, C[0].lat + dLat, C[0].lng + dLng, note, tech01.id, '王师傅', daysAgo(60, 9) ]
+    )
+  }
 
   // 李师傅（tech02）：5 单完成，0 返修
   await full({ tech: tech02, device: 'washer', fault: 'no_spin', brand: '小天鹅', model: 'TG80', floor: 3, createdDaysAgo: 55, partIds: [partId['P-WM-PUMP']], laborCents: 8000, rating: 5, resident: user02, community: C[1] })
@@ -368,6 +394,12 @@ export async function seedIfEmpty() {
   await ev(d4id, tech01, '提交报价 V1', { total_cents: 60000, items: 2 }, daysAgo(0, 14))
   await ev(d4id, user01, '确认报价 V1', { total_cents: 60000 }, daysAgo(0, 15))
   await ev(d4id, tech01, '开始维修', {}, daysAgo(0, 15))
+  // d4 到达轨迹与签到坐标（维修中订单的轨迹留痕样例）
+  await s(`UPDATE orders SET checkin_lat=$1, checkin_lng=$2 WHERE id=$3`, [C[0].lat + 0.002, C[0].lng + 0.0018, d4id])
+  await s(`INSERT INTO tracks(order_id, lat, lng, note, created_by, created_by_name, created_at) VALUES($1,$2,$3,'从站点出发',$4,$5,$6)`,
+    [d4id, C[0].lat + 0.001, C[0].lng + 0.0008, tech01.id, '王师傅', daysAgo(0, 13)])
+  await s(`INSERT INTO tracks(order_id, lat, lng, note, created_by, created_by_name, created_at) VALUES($1,$2,$3,'到场签到',$4,$5,$6)`,
+    [d4id, C[0].lat + 0.002, C[0].lng + 0.0018, tech01.id, '王师傅', daysAgo(0, 14)])
 
   // 5) 报价争议待客服处理（user02 空调不启动 → 赵师傅报价后用户争议）
   const d5 = await s(

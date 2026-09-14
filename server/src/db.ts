@@ -167,7 +167,46 @@ CREATE TABLE IF NOT EXISTS schedule(
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(technician_id, date, slot, order_id)
 );
+CREATE TABLE IF NOT EXISTS risk_assessments(
+  id SERIAL PRIMARY KEY,
+  order_id INT REFERENCES orders(id),
+  technician_id INT REFERENCES users(id),
+  floor INT DEFAULT 1,
+  anchor_condition TEXT DEFAULT '',
+  need_two_person BOOLEAN DEFAULT false,
+  danger_desc TEXT DEFAULT '',
+  fee_adjust_cents INT DEFAULT 0,
+  status TEXT DEFAULT 'pending',
+  cs_action TEXT DEFAULT '',
+  cs_note TEXT DEFAULT '',
+  handler_id INT,
+  handler_name TEXT DEFAULT '',
+  new_date TEXT DEFAULT '',
+  new_slot TEXT DEFAULT '',
+  support_technician_id INT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  resolved_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS tracks(
+  id SERIAL PRIMARY KEY,
+  order_id INT REFERENCES orders(id),
+  lat DOUBLE PRECISION DEFAULT 0,
+  lng DOUBLE PRECISION DEFAULT 0,
+  note TEXT DEFAULT '',
+  created_by INT,
+  created_by_name TEXT DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
 `
+
+/** 增量列（兼容已有数据卷） */
+const ALTERS = [
+  `ALTER TABLE parts ADD COLUMN IF NOT EXISTS model TEXT DEFAULT ''`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS support_technician_id INT`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkin_lat DOUBLE PRECISION`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkin_lng DOUBLE PRECISION`,
+  `ALTER TABLE technicians ADD COLUMN IF NOT EXISTS risk_reports INT DEFAULT 0`,
+]
 
 export async function initDb() {
   // 等待数据库就绪（compose 内 db 先健康检查，这里再做兜底重试）
@@ -184,6 +223,7 @@ export async function initDb() {
   }
   if (lastErr) throw lastErr
   await pool.query(SCHEMA)
+  for (const sql of ALTERS) await pool.query(sql)
 }
 
 /** 记录订单事件（时间线 / 档案还原的数据基础） */

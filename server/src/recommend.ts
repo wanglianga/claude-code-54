@@ -20,6 +20,7 @@ export interface RecommendItem {
   parts_needed: { part_id: number; name: string; available: number; ok: boolean }[]
   parts_ok: boolean
   safety_warning: string
+  dispatchable: boolean
   available_slots: { date: string; slot: string }[]
   rework_rate: number | null
   avg_rating: number | null
@@ -99,9 +100,11 @@ export async function recommendForOrder(order: any): Promise<RecommendItem[]> {
     // 安全 15 分：高空风险订单需要高空作业证
     let safety = 15
     let safetyWarning = ''
+    let dispatchable = true
     if (highRisk && !t.high_altitude_cert) {
       safety = 0
-      safetyWarning = '高楼层空调外机作业，该师傅无高空作业证，存在安全风险'
+      dispatchable = false
+      safetyWarning = '高楼层空调外机作业，该师傅无高空作业证，不可派送高空风险订单'
     }
 
     // 档期 10 分：居民期望时段内有空即得分
@@ -127,6 +130,7 @@ export async function recommendForOrder(order: any): Promise<RecommendItem[]> {
       parts_needed: partsNeeded,
       parts_ok: partsOk,
       safety_warning: safetyWarning,
+      dispatchable,
       available_slots: availableSlots,
       rework_rate: reworkRate,
       avg_rating: ratingMap.get(t.id) ?? null,

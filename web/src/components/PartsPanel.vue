@@ -2,8 +2,11 @@
   <div class="card mb">
     <div class="section-title">配件使用与追溯</div>
     <el-table :data="parts" size="small" v-if="parts.length">
-      <el-table-column prop="part_name" label="配件" min-width="150" />
-      <el-table-column prop="sku" label="SKU" width="130" />
+      <el-table-column prop="part_name" label="配件" min-width="140" />
+      <el-table-column prop="part_model" label="型号" width="130">
+        <template #default="{ row }">{{ row.part_model || '—' }}</template>
+      </el-table-column>
+      <el-table-column prop="sku" label="SKU" width="120" />
       <el-table-column prop="batch_no" label="批次号" width="110" />
       <el-table-column prop="qty" label="数量" width="60" />
       <el-table-column label="状态" width="90">

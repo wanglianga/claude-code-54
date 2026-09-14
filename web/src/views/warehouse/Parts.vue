@@ -10,7 +10,10 @@
       <div class="section-title">库存（可用 = 实物库存 − 已预留/已出库）</div>
       <el-table :data="parts" v-loading="loading" size="default">
         <el-table-column prop="sku" label="SKU" width="130" />
-        <el-table-column prop="name" label="配件名称" min-width="160" />
+        <el-table-column prop="name" label="配件名称" min-width="150" />
+        <el-table-column prop="model" label="型号" width="130">
+          <template #default="{ row }">{{ row.model || '—' }}</template>
+        </el-table-column>
         <el-table-column label="品类" width="90">
           <template #default="{ row }">{{ deviceLabel(row.device_type) }}</template>
         </el-table-column>
@@ -81,6 +84,7 @@
       <el-form label-width="90px">
         <el-form-item label="SKU"><el-input v-model="addForm.sku" placeholder="如 P-AC-FAN" /></el-form-item>
         <el-form-item label="名称"><el-input v-model="addForm.name" /></el-form-item>
+        <el-form-item label="型号"><el-input v-model="addForm.model" placeholder="如 GR-REMOTE-2.4G" /></el-form-item>
         <el-form-item label="品类">
           <el-select v-model="addForm.device_type" style="width: 100%">
             <el-option v-for="d in deviceTypes" :key="d.value" :label="d.label" :value="d.value" />
@@ -162,7 +166,7 @@ const traceDialog = ref(false)
 const traceData = ref<any>(null)
 
 const addForm = reactive({
-  sku: '', name: '', device_type: 'ac', brands: [] as string[], faults: [] as string[],
+  sku: '', name: '', model: '', device_type: 'ac', brands: [] as string[], faults: [] as string[],
   stock: 0, priceYuan: 0, batch_no: '', supplier: '',
 })
 

@@ -68,10 +68,32 @@ export const EVIDENCE_STAGES = [
   { value: 'appearance', label: '设备外观', phase: 'arrival' },
   { value: 'old_damage', label: '旧损记录', phase: 'arrival' },
   { value: 'fault_check', label: '故障检测', phase: 'arrival' },
+  { value: 'risk', label: '高空风险照片', phase: 'arrival' },
   { value: 'disassembly', label: '拆机照片', phase: 'repair' },
   { value: 'test_result', label: '试机结果', phase: 'repair' },
   { value: 'other', label: '其他补充', phase: 'any' },
 ]
+
+/** 高空外机固定条件选项 */
+export const ANCHOR_CONDITIONS = ['支架牢固', '支架锈蚀松动', '无专用固定点', '外机悬空无护栏', '其他']
+
+/** 高空风险处置动作 */
+export const RISK_ACTIONS = [
+  { value: 'continue', label: '确认风险，继续维修（加收高空费）' },
+  { value: 'reschedule', label: '改期上门' },
+  { value: 'reinforce', label: '加派人员双人作业' },
+  { value: 'cancel', label: '取消订单' },
+]
+
+export const RISK_ACTION_LABEL: Record<string, string> = Object.fromEntries(RISK_ACTIONS.map(a => [a.value, a.label]))
+
+export const RISK_STATUS_LABEL: Record<string, string> = {
+  pending: '待客服确认',
+  confirmed: '已确认继续维修',
+  rescheduled: '已改期',
+  reinforced: '已加派人员',
+  cancelled: '已取消订单',
+}
 
 export const EXCEPTION_TYPES = [
   { value: 'additional_item', label: '用户临时增加项目' },

@@ -21,7 +21,12 @@
           <el-descriptions-item label="楼层">{{ data.order.floor }} 层{{ data.order.has_elevator ? '（有电梯）' : '（无电梯）' }}</el-descriptions-item>
           <el-descriptions-item label="居民">{{ data.order.resident_name }} {{ data.order.resident_phone }}</el-descriptions-item>
           <el-descriptions-item label="地址">{{ data.order.address }}</el-descriptions-item>
-          <el-descriptions-item label="师傅">{{ data.order.technician_name || '待指派' }}</el-descriptions-item>
+          <el-descriptions-item label="师傅">
+            {{ data.order.technician_name || '待指派' }}
+            <el-tag v-if="data.order.support_technician_name" size="small" type="warning" style="margin-left: 6px">
+              加派：{{ data.order.support_technician_name }}
+            </el-tag>
+          </el-descriptions-item>
           <el-descriptions-item label="上门时间">
             {{ data.order.scheduled_date ? `${data.order.scheduled_date} ${data.order.scheduled_slot}` : '待预约' }}
           </el-descriptions-item>
@@ -35,8 +40,11 @@
 
       <RecommendPanel v-if="showRecommend" :order="data.order" @refresh="load" />
       <TechWorkbench :order="data.order" :is-technician="isAssignedTech" @refresh="load" />
+      <RiskPanel :order="data.order" :risks="data.risk_assessments" :evidence="data.evidence" :role="auth.role"
+        :anchor-conditions="anchorConditions" :risk-actions="riskActions" @refresh="load" />
       <EvidencePanel :order-id="data.order.id" :evidence="data.evidence" :can-upload="isAssignedTech"
         :stages="evidenceStages" @refresh="load" />
+      <TrackPanel :order="data.order" :tracks="data.tracks" :can-track="isAssignedTech || isSupportTech" @refresh="load" />
       <QuotePanel :order="data.order" :quotes="data.quotes" :is-resident="isOwnerResident"
         :is-technician="isAssignedTech" :part-options="partOptions" @refresh="load" />
       <PartsPanel :order="data.order" :parts="data.parts" :is-technician="isAssignedTech" @refresh="load" />
@@ -67,6 +75,8 @@ import ExceptionPanel from '../components/ExceptionPanel.vue'
 import RecommendPanel from '../components/RecommendPanel.vue'
 import TechWorkbench from '../components/TechWorkbench.vue'
 import AfterSalePanel from '../components/AfterSalePanel.vue'
+import RiskPanel from '../components/RiskPanel.vue'
+import TrackPanel from '../components/TrackPanel.vue'
 
 const route = useRoute()
 const auth = useAuth()
@@ -79,6 +89,7 @@ const id = Number(route.params.id)
 
 const isOwnerResident = computed(() => auth.role === 'resident' && data.value?.order.resident_id === auth.user?.id)
 const isAssignedTech = computed(() => auth.role === 'technician' && data.value?.order.technician_id === auth.user?.id)
+const isSupportTech = computed(() => auth.role === 'technician' && data.value?.order.support_technician_id === auth.user?.id)
 const showRecommend = computed(() =>
   ['pending', 'recommended'].includes(data.value?.order.status) &&
   (isOwnerResident.value || ['admin', 'cs'].includes(auth.role))
@@ -90,6 +101,8 @@ const canCancel = computed(() => {
 })
 const evidenceStages = computed(() => metaStore.data?.evidence_stages || [])
 const exceptionTypes = computed(() => metaStore.data?.exception_types || [])
+const anchorConditions = computed(() => metaStore.data?.anchor_conditions || [])
+const riskActions = computed(() => metaStore.data?.risk_actions || [])
 
 async function load() {
   loading.value = true

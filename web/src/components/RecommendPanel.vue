@@ -41,9 +41,9 @@
             </el-radio-button>
           </el-radio-group>
           <span v-if="!r.available_slots.length" class="muted">该师傅在您期望时段均无档期</span>
-          <el-button type="primary" size="small" :disabled="!picked[r.technician_id] || !r.parts_ok"
+          <el-button type="primary" size="small" :disabled="!picked[r.technician_id] || !r.parts_ok || r.dispatchable === false"
             :loading="scheduling === r.technician_id" @click="schedule(r)">
-            预约上门
+            {{ r.dispatchable === false ? '无高空资质不可派' : '预约上门' }}
           </el-button>
         </div>
       </div>

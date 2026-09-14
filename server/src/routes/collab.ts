@@ -4,7 +4,9 @@ import { AuthedRequest, authRequired, requireRole, today } from '../util'
 import {
   DEVICE_TYPES, BRANDS, FAULTS, COMMUNITIES, SLOTS, EVIDENCE_STAGES,
   EXCEPTION_TYPES, EXCEPTION_LABEL, ORDER_STATUS, DONE_STATUS, WARRANTY_DAYS,
+  ANCHOR_CONDITIONS, RISK_ACTIONS, RISK_ACTION_LABEL,
 } from '../meta'
+import { slotFreeCount } from '../recommend'
 
 export const collabRouter = Router()
 collabRouter.use(authRequired)
@@ -18,6 +20,7 @@ collabRouter.get('/meta', h(async (_req, res) => {
     device_types: DEVICE_TYPES, brands: BRANDS, faults: FAULTS, communities: COMMUNITIES,
     slots: SLOTS, evidence_stages: EVIDENCE_STAGES, exception_types: EXCEPTION_TYPES,
     order_status: ORDER_STATUS, warranty_days: WARRANTY_DAYS,
+    anchor_conditions: ANCHOR_CONDITIONS, risk_actions: RISK_ACTIONS,
   })
 }))
 
@@ -98,6 +101,93 @@ collabRouter.post('/exceptions/:id/resolve', requireRole('cs', 'warehouse', 'adm
   res.json({ ok: true })
 }))
 
+/* ---------------- 高空风险确认处置（客服/平台） ---------------- */
+
+collabRouter.post('/risk-assessments/:id/resolve', requireRole('cs', 'admin'), h(async (req, res) => {
+  const u = req.user!
+  const id = parseInt(req.params.id)
+  const r = await q(`SELECT * FROM risk_assessments WHERE id=$1`, [id])
+  const ra = r.rows[0]
+  if (!ra) return res.status(404).json({ error: '风险确认单不存在' })
+  if (ra.status !== 'pending') return res.status(409).json({ error: '该风险确认单已处理' })
+  const { action, note, new_date, new_slot, support_technician_id } = req.body || {}
+  if (!['continue', 'reschedule', 'reinforce', 'cancel'].includes(action)) {
+    return res.status(400).json({ error: '非法处置动作' })
+  }
+  const order = (await q(`SELECT * FROM orders WHERE id=$1`, [ra.order_id])).rows[0]
+  if (!order) return res.status(404).json({ error: '关联订单不存在' })
+
+  if (action === 'continue') {
+    // 确认风险继续维修：加收高空作业费，居民端可见费用变化
+    await q(
+      `UPDATE orders SET fee_adjust_cents = fee_adjust_cents + $1,
+         fee_note = CASE WHEN fee_note = '' THEN $2 ELSE fee_note || '；' || $2 END, updated_at=now() WHERE id=$3`,
+      [ra.fee_adjust_cents, `高空作业费(${ra.floor}层)`, ra.order_id]
+    )
+  }
+  if (action === 'reschedule') {
+    if (!new_date || !new_slot) return res.status(400).json({ error: '改期需选择新时段' })
+    // 改期影响师傅排班：释放旧档期，占用新档期（含加派师傅）
+    await q(`DELETE FROM schedule WHERE order_id=$1`, [ra.order_id])
+    await q(`INSERT INTO schedule(technician_id, date, slot, order_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+      [order.technician_id, new_date, new_slot, ra.order_id])
+    if (order.support_technician_id) {
+      await q(`INSERT INTO schedule(technician_id, date, slot, order_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+        [order.support_technician_id, new_date, new_slot, ra.order_id])
+    }
+    await q(`UPDATE orders SET scheduled_date=$1, scheduled_slot=$2, status='scheduled', updated_at=now() WHERE id=$3`,
+      [new_date, new_slot, ra.order_id])
+  }
+  if (action === 'reinforce') {
+    if (!support_technician_id) return res.status(400).json({ error: '加派需选择支援师傅' })
+    const sup = await q(
+      `SELECT u.id, u.name, t.status, t.high_altitude_cert FROM users u JOIN technicians t ON t.user_id=u.id WHERE u.id=$1`,
+      [support_technician_id]
+    )
+    if (!sup.rows.length) return res.status(404).json({ error: '支援师傅不存在' })
+    if (sup.rows[0].status !== 'active') return res.status(409).json({ error: '支援师傅已暂停接单' })
+    if (order.safety_risk === 'high' && !sup.rows[0].high_altitude_cert) {
+      return res.status(409).json({ error: '高空风险订单的支援师傅也需持高空作业证' })
+    }
+    if ((await slotFreeCount(support_technician_id, order.scheduled_date, order.scheduled_slot)) <= 0) {
+      return res.status(409).json({ error: '支援师傅该时段档期已满' })
+    }
+    // 加派影响排班（支援师傅占用档期）与费用（双人作业费）
+    await q(
+      `UPDATE orders SET support_technician_id=$1, fee_adjust_cents = fee_adjust_cents + $2,
+         fee_note = CASE WHEN fee_note = '' THEN $3 ELSE fee_note || '；' || $3 END, updated_at=now() WHERE id=$4`,
+      [support_technician_id, ra.fee_adjust_cents, `双人高空作业费(${ra.floor}层)`, ra.order_id]
+    )
+    await q(`INSERT INTO schedule(technician_id, date, slot, order_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+      [support_technician_id, order.scheduled_date, order.scheduled_slot, ra.order_id])
+    await q(`UPDATE risk_assessments SET support_technician_id=$1 WHERE id=$2`, [support_technician_id, id])
+  }
+  if (action === 'cancel') {
+    await q(`DELETE FROM order_parts WHERE order_id=$1 AND status='reserved'`, [ra.order_id])
+    await q(`DELETE FROM schedule WHERE order_id=$1`, [ra.order_id])
+    await q(`UPDATE orders SET status='cancelled', updated_at=now() WHERE id=$1`, [ra.order_id])
+  }
+
+  const statusMap: Record<string, string> = { continue: 'confirmed', reschedule: 'rescheduled', reinforce: 'reinforced', cancel: 'cancelled' }
+  await q(
+    `UPDATE risk_assessments SET status=$1, cs_action=$2, cs_note=$3, handler_id=$4, handler_name=$5, new_date=$6, new_slot=$7, resolved_at=now() WHERE id=$8`,
+    [statusMap[action], action, note || '', u.id, u.name, new_date || '', new_slot || '', id]
+  )
+  // 高空风险确认计入师傅高空资质档案（影响派单资质）
+  await q(`UPDATE technicians SET risk_reports = risk_reports + 1 WHERE user_id=$1`, [ra.technician_id])
+  // 关联高空异常同步闭环
+  await q(
+    `UPDATE exceptions SET status='resolved', resolution=$1, handler_id=$2, handler_name=$3, resolved_at=now()
+     WHERE order_id=$4 AND type='high_altitude' AND status='open'`,
+    [`高空风险已确认：${RISK_ACTION_LABEL[action]}${note ? `（${note}）` : ''}`, u.id, u.name, ra.order_id]
+  )
+  await logEvent(ra.order_id, u, `高空风险处置：${RISK_ACTION_LABEL[action]}`, {
+    note: note || '', new_date: new_date || '', new_slot: new_slot || '',
+    support_technician_id: support_technician_id || null, fee_adjust_cents: ra.fee_adjust_cents,
+  })
+  res.json({ ok: true })
+}))
+
 /* ---------------- 配件仓库 ---------------- */
 
 collabRouter.get('/parts', h(async (_req, res) => {
@@ -110,10 +200,10 @@ collabRouter.post('/parts', requireRole('warehouse', 'admin'), h(async (req, res
   const b = req.body || {}
   if (!b.sku || !b.name || !b.device_type) return res.status(400).json({ error: '缺少必填字段' })
   const ins = await q(
-    `INSERT INTO parts(sku, name, device_type, brands, faults, stock, price_cents, batch_no, supplier)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    `INSERT INTO parts(sku, name, device_type, brands, faults, stock, price_cents, batch_no, supplier, model)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
     [b.sku, b.name, b.device_type, JSON.stringify(b.brands || []), JSON.stringify(b.faults || []),
-     parseInt(b.stock) || 0, parseInt(b.price_cents) || 0, b.batch_no || '', b.supplier || '']
+     parseInt(b.stock) || 0, parseInt(b.price_cents) || 0, b.batch_no || '', b.supplier || '', b.model || '']
   )
   res.json({ id: ins.rows[0].id })
 }))
@@ -206,7 +296,7 @@ collabRouter.get('/schedule', h(async (req, res) => {
 
 collabRouter.get('/technicians', requireRole('admin', 'cs'), h(async (_req, res) => {
   const r = await q(
-    `SELECT u.id, u.name, u.phone, t.skills, t.high_altitude_cert, t.community, t.status, t.created_at
+    `SELECT u.id, u.name, u.phone, t.skills, t.high_altitude_cert, t.community, t.status, t.risk_reports, t.created_at
      FROM technicians t JOIN users u ON u.id = t.user_id ORDER BY u.id`
   )
   const stats = await technicianStats()
@@ -222,17 +312,30 @@ collabRouter.get('/technicians', requireRole('admin', 'cs'), h(async (_req, res)
 
 collabRouter.patch('/technicians/:id', requireRole('admin'), h(async (req, res) => {
   const id = parseInt(req.params.id)
-  const { status } = req.body || {}
-  if (!['active', 'suspended'].includes(status)) return res.status(400).json({ error: '非法状态' })
-  await q(`UPDATE technicians SET status=$1 WHERE user_id=$2`, [status, id])
+  const { status, high_altitude_cert } = req.body || {}
   const u = await q(`SELECT name FROM users WHERE id=$1`, [id])
-  // 记录到该师傅未完成订单的时间线（便于追溯）
-  await q(
-    `INSERT INTO order_events(order_id, actor_id, actor_name, actor_role, action, detail)
-     SELECT o.id, $1, $2, 'admin', $3, $4 FROM orders o
-     WHERE o.technician_id=$5 AND o.status IN ('scheduled','arrived','quote_pending','quote_confirmed','repairing')`,
-    [req.user!.id, req.user!.name, status === 'suspended' ? '师傅被暂停准入' : '师傅恢复准入', { technician: u.rows[0]?.name }, id]
-  )
+  if (!u.rows.length) return res.status(404).json({ error: '师傅不存在' })
+  if (status !== undefined) {
+    if (!['active', 'suspended'].includes(status)) return res.status(400).json({ error: '非法状态' })
+    await q(`UPDATE technicians SET status=$1 WHERE user_id=$2`, [status, id])
+    // 记录到该师傅未完成订单的时间线（便于追溯）
+    await q(
+      `INSERT INTO order_events(order_id, actor_id, actor_name, actor_role, action, detail)
+       SELECT o.id, $1, $2, 'admin', $3, $4 FROM orders o
+       WHERE o.technician_id=$5 AND o.status IN ('scheduled','arrived','quote_pending','quote_confirmed','repairing')`,
+      [req.user!.id, req.user!.name, status === 'suspended' ? '师傅被暂停准入' : '师傅恢复准入', JSON.stringify({ technician: u.rows[0].name }), id]
+    )
+  }
+  if (high_altitude_cert !== undefined) {
+    // 高空作业资质授予/吊销：直接影响高空风险订单派单
+    await q(`UPDATE technicians SET high_altitude_cert=$1 WHERE user_id=$2`, [!!high_altitude_cert, id])
+    await q(
+      `INSERT INTO order_events(order_id, actor_id, actor_name, actor_role, action, detail)
+       SELECT o.id, $1, $2, 'admin', $3, $4 FROM orders o
+       WHERE o.technician_id=$5 AND o.status IN ('scheduled','arrived','quote_pending','quote_confirmed','repairing')`,
+      [req.user!.id, req.user!.name, high_altitude_cert ? '高空作业资质授予' : '高空作业资质吊销', JSON.stringify({ technician: u.rows[0].name }), id]
+    )
+  }
   res.json({ ok: true })
 }))
 

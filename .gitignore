@@ -57,6 +57,7 @@ QA/
 verification/
 /scripts/browser-verify.cjs
 /scripts/timeline-verify.cjs
+/scripts/risk-verify.cjs
 
 # Editor and OS files
 .DS_Store

@@ -22,7 +22,8 @@ docker compose port app 8080   # 查看实际映射端口，浏览器访问 http
 
 - 只有 **app** 服务发布到宿主（`${CC_PUBLISH_PORT}:8080`）；PostgreSQL 仅在 compose 内部网络，app 通过服务名 `db` 访问。
 - 首次启动自动建表并写入演示数据（账号、配件库存、9 条完整归档订单、6 条进行中订单、返修与异常样例）。
-- 端到端自测（可选）：栈启动后执行 `node scripts/smoke.mjs`（默认打 `http://host.docker.internal:3054`，可用 `BASE=http://host.docker.internal:<端口>` 覆盖），覆盖登录、推荐、配件联动拦截、签到取证、报价确认、维修完成、支付评价归档、质保返修、异常协同、统计准入、档案追溯共 51 项断言。
+- 端到端自测（可选）：栈启动后执行 `node scripts/smoke.mjs`（默认打 `http://host.docker.internal:3054`，可用 `BASE=http://host.docker.internal:<端口>` 覆盖），覆盖登录、推荐、配件联动拦截、高空资质拦截、轨迹留痕、风险确认、签到取证、报价确认、维修完成、支付评价归档、质保返修、异常协同、统计准入、档案追溯共 66 项断言。
+- 真实浏览器回归（可选）：`scripts/browser-verify.cjs`、`scripts/timeline-verify.cjs`、`scripts/risk-verify.cjs` 基于 Playwright + Chromium（可用 `mcr.microsoft.com/playwright` 镜像运行；接入 compose 网络用 `BASE=http://app:8080`，涉及浏览器定位的场景用 `--network host`、`BASE=http://localhost:<端口>` 以获得安全上下文），分别覆盖故障标签联动（17 项）、时间线区域（7 项）、高空风险确认全流程（14 项）断言；最近一次通过的截图存于 `verification/`。
 - 验证结束：`docker compose down`（加 `-v` 可同时清空数据卷）。
 
 ## 演示账号（逐角色）
@@ -45,7 +46,9 @@ docker compose port app 8080   # 查看实际映射端口，浏览器访问 http
 3. **上门取证**：师傅（`tech01`）在工单工作台签到 → 上传设备外观/旧损/故障检测照片 → 提交报价 → 居民确认（或发起争议转客服）。
 4. **维修过程**：报价确认后师傅开始维修 → 登记更换配件（批次号留痕）→ 上传拆机照片 → 填写试机结果与收费明细 → 完成自动生成 90 天质保。
 5. **异常协同**：居民可"临时增加项目"；师傅可上报"高空作业风险/配件不匹配"；报价争议由客服处理（可要求重新报价）；配件不匹配由仓库处理；质保期内"故障复发"由居民发起，自动生成**返修单**（免费）并关联原单。
-6. **档案与统计**：支付 → 评价 → 自动归档。`admin` 在「统计看板」查看按师傅/品类/配件的返修率与"社区快修 vs 转品牌售后"建议；「师傅准入」按返修率给出暂停/恢复建议；「订单档案库」可进入任一工单，通过时间线+证据+报价版本+配件追溯+异常记录**还原维修全过程**。
+6. **高空风险确认**：师傅发现外机位置危险时上报风险确认单（**风险照片 + 楼层 + 固定条件 + 是否双人作业 + 高空作业费**）；客服处置四选一：**确认继续（加收高空费）/ 改期（联动师傅排班）/ 加派人员（双人作业费 + 支援师傅排班）/ 取消订单**；居民端实时看到风险原因与费用变化。高空风险订单仅可派给持高空作业证的师傅（推荐区直接禁用无证师傅），平台可在「师傅准入」授予/吊销高空资质，风险确认计入师傅高空档案。
+7. **过程留痕**：师傅签到与手动记录均写入**到达轨迹**（坐标 + 时间，页面含轨迹示意图）；更换配件记录**配件型号 + 批次号**；投诉时可通过时间线 + 证据 + 轨迹 + 配件追溯还原全过程。
+8. **档案与统计**：支付 → 评价 → 自动归档。`admin` 在「统计看板」查看按师傅/品类/配件的返修率与"社区快修 vs 转品牌售后"建议；「师傅准入」按返修率给出暂停/恢复建议；「订单档案库」可进入任一工单，通过时间线+证据+报价版本+配件追溯+异常记录**还原维修全过程**。
 
 ## 目录结构
 
@@ -60,7 +63,8 @@ docker compose port app 8080   # 查看实际映射端口，浏览器访问 http
 ## 主要接口（/api 前缀）
 
 - 认证：`POST /auth/login`、`GET /auth/me`
-- 工单：`POST /orders`、`GET /orders`、`GET /orders/:id`（完整档案）、`GET /orders/:id/recommendations`、`POST /orders/:id/schedule|checkin|quotes|start-repair|use-part|complete|pay|review|rework|cancel`、`POST /orders/:id/evidence`（multipart）
+- 工单：`POST /orders`、`GET /orders`、`GET /orders/:id`（完整档案）、`GET /orders/:id/recommendations`、`POST /orders/:id/schedule|checkin|quotes|start-repair|use-part|complete|pay|review|rework|cancel`、`POST /orders/:id/evidence`（multipart）、`POST /orders/:id/track`（到达轨迹）、`POST /orders/:id/risk-assessment`（高空风险确认单）
+- 高空风险：`POST /risk-assessments/:id/resolve`（客服处置：continue/reschedule/reinforce/cancel）
 - 报价：`POST /orders/:id/quotes/:qid/confirm|dispute`
 - 协同：`GET /exceptions`、`POST /orders/:id/exceptions`、`POST /exceptions/:id/resolve`
 - 配件：`GET/POST /parts`、`POST /parts/:id/restock`、`GET /parts/:id/trace`、`GET /order-parts`、`POST /order-parts/:id/outbound`

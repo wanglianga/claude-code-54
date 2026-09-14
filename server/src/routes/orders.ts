@@ -38,24 +38,32 @@ function withLabels(o: any) {
 
 async function getOrderFull(id: number) {
   const o = await q(
-    `SELECT o.*, r.name AS resident_name, r.phone AS resident_phone, t.name AS technician_name
+    `SELECT o.*, r.name AS resident_name, r.phone AS resident_phone, t.name AS technician_name,
+            st.name AS support_technician_name
      FROM orders o
      LEFT JOIN users r ON r.id = o.resident_id
      LEFT JOIN users t ON t.id = o.technician_id
+     LEFT JOIN users st ON st.id = o.support_technician_id
      WHERE o.id = $1`,
     [id]
   )
   if (!o.rows.length) return null
-  const [events, evidence, quotes, parts, exceptions, payment, review, warranty, reworks] = await Promise.all([
+  const [events, evidence, quotes, parts, exceptions, payment, review, warranty, reworks, risks, tracks] = await Promise.all([
     q(`SELECT * FROM order_events WHERE order_id = $1 ORDER BY created_at ASC, id ASC`, [id]),
     q(`SELECT * FROM evidence WHERE order_id = $1 ORDER BY created_at ASC, id ASC`, [id]),
     q(`SELECT * FROM quotes WHERE order_id = $1 ORDER BY version DESC, id DESC`, [id]),
-    q(`SELECT op.*, p.name AS part_name, p.sku, p.price_cents FROM order_parts op JOIN parts p ON p.id = op.part_id WHERE op.order_id = $1 ORDER BY op.id`, [id]),
+    q(`SELECT op.*, p.name AS part_name, p.sku, p.price_cents, p.model AS part_model FROM order_parts op JOIN parts p ON p.id = op.part_id WHERE op.order_id = $1 ORDER BY op.id`, [id]),
     q(`SELECT * FROM exceptions WHERE order_id = $1 ORDER BY created_at DESC, id DESC`, [id]),
     q(`SELECT * FROM payments WHERE order_id = $1 ORDER BY id DESC LIMIT 1`, [id]),
     q(`SELECT * FROM reviews WHERE order_id = $1 ORDER BY id DESC LIMIT 1`, [id]),
     q(`SELECT * FROM warranties WHERE order_id = $1 ORDER BY id DESC LIMIT 1`, [id]),
     q(`SELECT id, order_no, status, created_at FROM orders WHERE original_order_id = $1 ORDER BY id DESC`, [id]),
+    q(`SELECT r.*, u.name AS technician_name, su.name AS support_technician_name
+       FROM risk_assessments r
+       LEFT JOIN users u ON u.id = r.technician_id
+       LEFT JOIN users su ON su.id = r.support_technician_id
+       WHERE r.order_id = $1 ORDER BY r.created_at DESC, r.id DESC`, [id]),
+    q(`SELECT * FROM tracks WHERE order_id = $1 ORDER BY created_at ASC, id ASC`, [id]),
   ])
   let original: any = null
   if (o.rows[0].original_order_id) {
@@ -73,6 +81,8 @@ async function getOrderFull(id: number) {
     review: review.rows[0] || null,
     warranty: warranty.rows[0] || null,
     reworks: reworks.rows,
+    risk_assessments: risks.rows,
+    tracks: tracks.rows,
     original,
   }
 }
@@ -80,7 +90,7 @@ async function getOrderFull(id: number) {
 function canView(user: any, order: any) {
   if (['admin', 'cs', 'warehouse'].includes(user.role)) return true
   if (user.role === 'resident') return order.resident_id === user.id
-  if (user.role === 'technician') return order.technician_id === user.id
+  if (user.role === 'technician') return order.technician_id === user.id || order.support_technician_id === user.id
   return false
 }
 
@@ -90,7 +100,7 @@ ordersRouter.get('/', h(async (req, res) => {
   const conds: string[] = []
   const params: any[] = []
   if (u.role === 'resident') { params.push(u.id); conds.push(`o.resident_id = $${params.length}`) }
-  if (u.role === 'technician') { params.push(u.id); conds.push(`o.technician_id = $${params.length}`) }
+  if (u.role === 'technician') { params.push(u.id); conds.push(`(o.technician_id = $${params.length} OR o.support_technician_id = $${params.length})`) }
   if (req.query.status) { params.push(req.query.status); conds.push(`o.status = $${params.length}`) }
   if (req.query.device_type) { params.push(req.query.device_type); conds.push(`o.device_type = $${params.length}`) }
   if (req.query.technician_id) { params.push(req.query.technician_id); conds.push(`o.technician_id = $${params.length}`) }
@@ -172,9 +182,14 @@ ordersRouter.post('/:id/schedule', requireRole('resident'), h(async (req, res) =
   if (!['pending', 'recommended'].includes(order.status)) {
     return res.status(409).json({ error: `当前状态（${ORDER_STATUS[order.status]}）不可预约` })
   }
-  const tech = await q(`SELECT u.id, u.name, t.status FROM users u JOIN technicians t ON t.user_id = u.id WHERE u.id = $1`, [technician_id])
+  const tech = await q(`SELECT u.id, u.name, t.status, t.high_altitude_cert FROM users u JOIN technicians t ON t.user_id = u.id WHERE u.id = $1`, [technician_id])
   if (!tech.rows.length) return res.status(404).json({ error: '师傅不存在' })
   if (tech.rows[0].status !== 'active') return res.status(409).json({ error: '该师傅已暂停接单' })
+  // 高空风险订单仅可派给持高空作业证的师傅（资质影响派单）
+  if (order.safety_risk === 'high' && !tech.rows[0].high_altitude_cert) {
+    await logEvent(orderId, req.user, '预约被拦截：师傅无高空作业资质', { technician: tech.rows[0].name })
+    return res.status(403).json({ error: '高空风险订单仅可派给持高空作业证的师傅' })
+  }
   const slotOk = (order.time_slots || []).some((ts: any) => ts.date === date && ts.slot === slot)
   if (!slotOk) return res.status(400).json({ error: '所选时段不在居民可上门时段内' })
   if ((await slotFreeCount(technician_id, date, slot)) <= 0) {
@@ -222,7 +237,7 @@ ordersRouter.post('/:id/schedule', requireRole('resident'), h(async (req, res) =
   res.json({ ok: true })
 }))
 
-/** 师傅到场签到 */
+/** 师傅到场签到（记录到达坐标，纳入到达轨迹） */
 ordersRouter.post('/:id/checkin', requireRole('technician'), h(async (req, res) => {
   const orderId = parseInt(req.params.id)
   const r = await q(`SELECT * FROM orders WHERE id = $1`, [orderId])
@@ -230,9 +245,78 @@ ordersRouter.post('/:id/checkin', requireRole('technician'), h(async (req, res) 
   if (!order) return res.status(404).json({ error: '订单不存在' })
   if (order.technician_id !== req.user!.id) return res.status(403).json({ error: '该订单未指派给你' })
   if (order.status !== 'scheduled') return res.status(409).json({ error: '当前状态不可签到' })
-  await q(`UPDATE orders SET status='arrived', updated_at=now() WHERE id=$1`, [orderId])
-  await logEvent(orderId, req.user, '师傅到场签到', { note: req.body?.note || '' })
+  const lat = parseFloat(req.body?.lat)
+  const lng = parseFloat(req.body?.lng)
+  const hasLoc = Number.isFinite(lat) && Number.isFinite(lng)
+  await q(`UPDATE orders SET status='arrived', checkin_lat=$1, checkin_lng=$2, updated_at=now() WHERE id=$3`,
+    [hasLoc ? lat : null, hasLoc ? lng : null, orderId])
+  if (hasLoc) {
+    await q(`INSERT INTO tracks(order_id, lat, lng, note, created_by, created_by_name) VALUES($1,$2,$3,'到场签到',$4,$5)`,
+      [orderId, lat, lng, req.user!.id, req.user!.name])
+  }
+  await logEvent(orderId, req.user, '师傅到场签到', {
+    note: req.body?.note || '',
+    ...(hasLoc ? { location: `${lat.toFixed(6)},${lng.toFixed(6)}` } : {}),
+  })
   res.json({ ok: true })
+}))
+
+/** 记录师傅到达轨迹点（上门过程留痕，投诉还原用） */
+ordersRouter.post('/:id/track', requireRole('technician'), h(async (req, res) => {
+  const orderId = parseInt(req.params.id)
+  const r = await q(`SELECT * FROM orders WHERE id = $1`, [orderId])
+  const order = r.rows[0]
+  if (!order) return res.status(404).json({ error: '订单不存在' })
+  if (order.technician_id !== req.user!.id && order.support_technician_id !== req.user!.id) {
+    return res.status(403).json({ error: '该订单未指派给你' })
+  }
+  const lat = parseFloat(req.body?.lat)
+  const lng = parseFloat(req.body?.lng)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: '缺少有效坐标（lat/lng）' })
+  }
+  const note = req.body?.note || ''
+  const ins = await q(
+    `INSERT INTO tracks(order_id, lat, lng, note, created_by, created_by_name) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [orderId, lat, lng, note, req.user!.id, req.user!.name]
+  )
+  await logEvent(orderId, req.user, '记录到达轨迹', { location: `${lat.toFixed(6)},${lng.toFixed(6)}`, note })
+  res.json({ id: ins.rows[0].id })
+}))
+
+/** 师傅提交高空风险确认单（需先上传风险照片） */
+ordersRouter.post('/:id/risk-assessment', requireRole('technician'), h(async (req, res) => {
+  const orderId = parseInt(req.params.id)
+  const r = await q(`SELECT * FROM orders WHERE id = $1`, [orderId])
+  const order = r.rows[0]
+  if (!order) return res.status(404).json({ error: '订单不存在' })
+  if (order.technician_id !== req.user!.id) return res.status(403).json({ error: '该订单未指派给你' })
+  if (['completed', 'paid', 'reviewed', 'archived', 'cancelled'].includes(order.status)) {
+    return res.status(409).json({ error: '订单已完结，不能发起风险确认' })
+  }
+  const photos = await q(`SELECT COUNT(*)::int AS c FROM evidence WHERE order_id=$1 AND stage='risk'`, [orderId])
+  if (photos.rows[0].c === 0) {
+    return res.status(409).json({ error: '请先上传高空风险照片（证据类型选「高空风险照片」）' })
+  }
+  const { floor, anchor_condition, need_two_person, danger_desc, fee_adjust_cents } = req.body || {}
+  if (!danger_desc) return res.status(400).json({ error: '请填写危险情况说明' })
+  const fee = Math.max(0, parseInt(fee_adjust_cents) || 0)
+  const ins = await q(
+    `INSERT INTO risk_assessments(order_id, technician_id, floor, anchor_condition, need_two_person, danger_desc, fee_adjust_cents)
+     VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [orderId, req.user!.id, parseInt(floor) || order.floor, anchor_condition || '',
+     !!need_two_person, danger_desc, fee]
+  )
+  await q(
+    `INSERT INTO exceptions(order_id, type, title, description, created_by, created_by_name, created_by_role)
+     VALUES($1,'high_altitude','高空作业风险确认',$2,$3,$4,'technician')`,
+    [orderId, `${danger_desc}（${parseInt(floor) || order.floor} 层，${anchor_condition || '固定条件未知'}${need_two_person ? '，需双人作业' : ''}）`, req.user!.id, req.user!.name]
+  )
+  await logEvent(orderId, req.user, '上报高空风险确认', {
+    floor: parseInt(floor) || order.floor, anchor_condition,
+    need_two_person: !!need_two_person, danger_desc, fee_adjust_cents: fee,
+  })
+  res.json({ id: ins.rows[0].id })
 }))
 
 /** 上传上门证据（外观/旧损/检测/拆机/试机） */
@@ -390,8 +474,8 @@ ordersRouter.post('/:id/use-part', requireRole('technician'), h(async (req, res)
       await q(`UPDATE parts SET stock = stock - $1 WHERE id=$2`, [op.rows[0].qty, op.rows[0].part_id])
     }
     await q(`UPDATE order_parts SET status='used', updated_at=now() WHERE id=$1`, [order_part_id])
-    const p = await q(`SELECT name FROM parts WHERE id=$1`, [op.rows[0].part_id])
-    await logEvent(orderId, req.user, '登记更换配件', { part: p.rows[0]?.name, qty: op.rows[0].qty, batch_no: op.rows[0].batch_no })
+    const p = await q(`SELECT name, model FROM parts WHERE id=$1`, [op.rows[0].part_id])
+    await logEvent(orderId, req.user, '登记更换配件', { part: p.rows[0]?.name, model: p.rows[0]?.model, qty: op.rows[0].qty, batch_no: op.rows[0].batch_no })
   } else if (part_id) {
     const n = parseInt(qty) || 1
     if ((await partAvailability(part_id)) < n) return res.status(409).json({ error: '该配件库存不足' })
@@ -399,7 +483,7 @@ ordersRouter.post('/:id/use-part', requireRole('technician'), h(async (req, res)
     await q(`UPDATE parts SET stock = stock - $1 WHERE id=$2`, [n, part_id])
     await q(`INSERT INTO order_parts(order_id, part_id, qty, status, batch_no) VALUES($1,$2,$3,'used',$4)`,
       [orderId, part_id, n, p.rows[0].batch_no])
-    await logEvent(orderId, req.user, '登记更换配件', { part: p.rows[0].name, qty: n, batch_no: p.rows[0].batch_no })
+    await logEvent(orderId, req.user, '登记更换配件', { part: p.rows[0].name, model: p.rows[0].model, qty: n, batch_no: p.rows[0].batch_no })
   } else {
     return res.status(400).json({ error: '缺少配件参数' })
   }
@@ -423,8 +507,12 @@ ordersRouter.post('/:id/complete', requireRole('technician'), h(async (req, res)
   }
   const adjust = parseInt(fee_adjust_cents) || 0
   const start = today()
+  // 费用调整为累加制：高空作业费、双人作业费等已入账费用不被覆盖
   await q(
-    `UPDATE orders SET status='completed', test_result='pass', test_note=$1, fee_adjust_cents=$2, fee_note=$3, updated_at=now() WHERE id=$4`,
+    `UPDATE orders SET status='completed', test_result='pass', test_note=$1,
+       fee_adjust_cents = fee_adjust_cents + $2,
+       fee_note = CASE WHEN $3 = '' THEN fee_note WHEN fee_note = '' THEN $3 ELSE fee_note || '；' || $3 END,
+       updated_at=now() WHERE id=$4`,
     [test_note || '', adjust, fee_note || '', orderId]
   )
   await q(

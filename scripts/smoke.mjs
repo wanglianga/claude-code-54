@@ -93,6 +93,13 @@ async function main() {
   const restock = await req('POST', `/parts/${board.id}/restock`, { token: tokens.wh01, body: { qty: 5 } })
   check('仓库补货成功', restock.status === 200)
 
+  // 高空资质拦截：赵师傅无高空作业证，高空风险单不可派
+  const zhaoSchedule = await req('POST', `/orders/${oid}/schedule`, {
+    token: tokens.user01,
+    body: { technician_id: t03.technician_id, date: tomorrow(1), slot: '上午 9:00-12:00' },
+  })
+  check('高空风险单派给无证师傅被拦截(403)', zhaoSchedule.status === 403, JSON.stringify(zhaoSchedule.data))
+
   const sched = await req('POST', `/orders/${oid}/schedule`, {
     token: tokens.user01,
     body: { technician_id: t01.technician_id, date: tomorrow(1), slot: '上午 9:00-12:00' },
@@ -102,9 +109,63 @@ async function main() {
   check('预约后自动预留配件', detail.data.parts.length >= 2 && detail.data.parts.every(p => p.status === 'reserved'))
   check('订单进入已预约状态', detail.data.order.status === 'scheduled')
 
-  console.log('== 4. 师傅上门：签到 → 证据 → 报价 ==')
-  const checkin = await req('POST', `/orders/${oid}/checkin`, { token: tokens.tech01, body: {} })
-  check('师傅到场签到', checkin.status === 200)
+  console.log('== 3.5 高空风险确认：轨迹 → 风险上报 → 客服加派 → 费用联动 ==')
+  // 签到带坐标 → 自动生成轨迹点
+  const checkin = await req('POST', `/orders/${oid}/checkin`, {
+    token: tokens.tech01, body: { lat: 31.2401, lng: 121.5002 },
+  })
+  check('师傅到场签到(带坐标)', checkin.status === 200)
+  detail = await req('GET', `/orders/${oid}`, { token: tokens.tech01 })
+  check('签到坐标与轨迹点已记录', detail.data.order.checkin_lat !== null && detail.data.tracks.length === 1)
+  const track = await req('POST', `/orders/${oid}/track`, {
+    token: tokens.tech01, body: { lat: 31.2405, lng: 121.5009, note: '到达楼栋' },
+  })
+  check('师傅记录到达轨迹', track.status === 200)
+  // 未传风险照片 → 拦截
+  const raNoPhoto = await req('POST', `/orders/${oid}/risk-assessment`, {
+    token: tokens.tech01,
+    body: { floor: 9, anchor_condition: '支架锈蚀松动', need_two_person: true, danger_desc: '外机支架锈蚀，悬空无护栏', fee_adjust_cents: 20000 },
+  })
+  check('未上传风险照片时上报被拦截(409)', raNoPhoto.status === 409)
+  // 上传风险照片后上报
+  const riskSvg = new Blob([`<svg xmlns="http://www.w3.org/2000/svg" width="100" height="60"><rect width="100" height="60" fill="#b3541e"/><text x="8" y="35" fill="#fff">risk</text></svg>`], { type: 'image/svg+xml' })
+  const riskForm = new FormData()
+  riskForm.append('file', riskSvg, 'risk.svg')
+  riskForm.append('stage', 'risk')
+  riskForm.append('note', '外机支架锈蚀特写')
+  check('上传高空风险照片', (await req('POST', `/orders/${oid}/evidence`, { token: tokens.tech01, form: riskForm })).status === 200)
+  const ra = await req('POST', `/orders/${oid}/risk-assessment`, {
+    token: tokens.tech01,
+    body: { floor: 9, anchor_condition: '支架锈蚀松动', need_two_person: true, danger_desc: '外机支架锈蚀，悬空无护栏', fee_adjust_cents: 20000 },
+  })
+  check('提交高空风险确认单', ra.status === 200, JSON.stringify(ra.data))
+  detail = await req('GET', `/orders/${oid}`, { token: tokens.user01 })
+  check('居民端可见风险原因与待确认状态', detail.data.risk_assessments[0]?.status === 'pending' && detail.data.risk_assessments[0]?.danger_desc.includes('支架锈蚀'))
+  check('高空异常同步生成', detail.data.exceptions.some(e => e.type === 'high_altitude' && e.status === 'open'))
+  // 平台授予赵师傅高空资质 → 客服加派赵师傅双人作业
+  const techsBefore = await req('GET', '/technicians', { token: tokens.admin })
+  const zhaoId = techsBefore.data.find(t => t.name === '赵师傅').id
+  check('平台授予赵师傅高空资质', (await req('PATCH', `/technicians/${zhaoId}`, { token: tokens.admin, body: { high_altitude_cert: true } })).status === 200)
+  const raId = detail.data.risk_assessments[0].id
+  const raResolve = await req('POST', `/risk-assessments/${raId}/resolve`, {
+    token: tokens.cs01,
+    body: { action: 'reinforce', support_technician_id: zhaoId, note: '已协调双人作业' },
+  })
+  check('客服处置：加派人员双人作业', raResolve.status === 200, JSON.stringify(raResolve.data))
+  detail = await req('GET', `/orders/${oid}`, { token: tokens.user01 })
+  check('加派后订单显示支援师傅', detail.data.order.support_technician_id === zhaoId)
+  check('居民端可见费用变化(+200高空费)', detail.data.order.fee_adjust_cents === 20000 && detail.data.order.fee_note.includes('双人高空作业费'))
+  check('风险单状态为已加派', detail.data.risk_assessments[0]?.status === 'reinforced')
+  check('高空异常同步闭环', detail.data.exceptions.every(e => e.type !== 'high_altitude' || e.status === 'resolved'))
+  // 加派影响师傅排班：赵师傅日程出现该订单，且可查看/记录轨迹
+  const zhaoAgenda = await req('GET', `/schedule?technician_id=${zhaoId}`, { token: tokens.admin })
+  check('加派进入赵师傅排班', zhaoAgenda.data.some(s => s.order_id === oid))
+  check('支援师傅可查看订单', (await req('GET', `/orders/${oid}`, { token: tokens.tech03 })).status === 200)
+  check('支援师傅可记录轨迹', (await req('POST', `/orders/${oid}/track`, { token: tokens.tech03, body: { lat: 31.2408, lng: 121.5012, note: '支援到达' } })).status === 200)
+  const techsAfter = await req('GET', '/technicians', { token: tokens.admin })
+  check('风险确认计入师傅高空档案', techsAfter.data.find(t => t.name === '王师傅').risk_reports >= 1)
+
+  console.log('== 4. 师傅上门：证据 → 报价 ==')
 
   const svg = new Blob([`<svg xmlns="http://www.w3.org/2000/svg" width="100" height="60"><rect width="100" height="60" fill="#369"/><text x="10" y="35" fill="#fff">smoke</text></svg>`], { type: 'image/svg+xml' })
   const form = new FormData()
@@ -149,7 +210,7 @@ async function main() {
   check('生成 90 天质保', !!detail.data.warranty && detail.data.warranty.period_days === 90)
 
   const pay = await req('POST', `/orders/${oid}/pay`, { token: tokens.user01, body: { method: 'online' } })
-  check('居民支付', pay.status === 200 && pay.data.amount_cents === 22000, JSON.stringify(pay.data))
+  check('居民支付(报价22000+高空费20000)', pay.status === 200 && pay.data.amount_cents === 42000, JSON.stringify(pay.data))
   check('提交评价并归档', (await req('POST', `/orders/${oid}/review`, { token: tokens.user01, body: { rating: 5, tags: ['服务及时'], comment: '冒烟测试好评' } })).status === 200)
   detail = await req('GET', `/orders/${oid}`, { token: tokens.user01 })
   check('订单归档且时间线完整', detail.data.order.status === 'archived' && detail.data.events.length >= 10,

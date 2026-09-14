@@ -69,6 +69,7 @@ export const STAGE_LABEL: Record<string, string> = {
   appearance: '设备外观',
   old_damage: '旧损记录',
   fault_check: '故障检测',
+  risk: '高空风险照片',
   disassembly: '拆机照片',
   test_result: '试机结果',
   other: '其他补充',
